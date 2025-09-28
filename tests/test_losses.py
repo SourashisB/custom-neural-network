@@ -1,5 +1,3 @@
-# tests/test_losses.py
-
 import numpy as np
 
 from src.losses import BinaryCrossEntropy, CategoricalCrossEntropy, MSELoss
