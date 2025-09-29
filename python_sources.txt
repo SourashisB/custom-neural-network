@@ -1,0 +1,2717 @@
+﻿==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\demo_data.py ====
+import numpy as np
+
+from src.data import load_iris_pandas, load_mnist_npz, load_mnist_csv, split_train_val_test
+
+
+def demo_iris(csv_path: str):
+    ds = load_iris_pandas(csv_path, val_ratio=0.2, test_ratio=0.1, seed=123)
+    print("Iris shapes:")
+    print("Train:", ds.X_train.shape, ds.y_train.shape)
+    print("Val  :", ds.X_val.shape, ds.y_val.shape)
+    if ds.X_test is not None:
+        print("Test :", ds.X_test.shape, ds.y_test.shape)
+
+
+def demo_mnist_npz(npz_path: str):
+    X_tr, y_tr = load_mnist_npz(npz_path, split="train")
+    X_te, y_te = load_mnist_npz(npz_path, split="test")
+    print("MNIST npz:")
+    print("Train:", X_tr.shape, y_tr.shape, "min/max", float(X_tr.min()), float(X_tr.max()))
+    print("Test :", X_te.shape, y_te.shape)
+
+
+def demo_mnist_csv(csv_path: str):
+    X, y = load_mnist_csv(csv_path)
+    ds = split_train_val_test(X, y, val_ratio=0.1, test_ratio=0.1, seed=7)
+    print("MNIST csv splits:")
+    print("Train:", ds.X_train.shape, "Val:", ds.X_val.shape, "Test:", ds.X_test.shape)
+
+
+if __name__ == "__main__":
+    # Provide local paths to run these demos:
+    # demo_iris("path/to/iris.csv")
+    # demo_mnist_npz("path/to/mnist.npz")
+    # demo_mnist_csv("path/to/mnist.csv")
+    pass
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\demo_layers.py ====
+# examples/demo_layers.py
+
+import numpy as np
+
+from src.activations import ReLU, Sigmoid, Softmax, Tanh
+from src.layers import Dense
+from src.tensor import to_one_hot
+
+
+def demo_dense_and_activations():
+    rng = np.random.default_rng(0)
+    N, D, H, C = 8, 5, 10, 3
+
+    X = rng.standard_normal((N, D)).astype("float32")
+
+    # Dense layer with He init (good for ReLU)
+    dense = Dense(D, H, weight_init="he_normal")
+    relu = ReLU()
+    out1 = dense.forward(X, training=True)
+    out2 = relu.forward(out1, training=True)
+
+    # Backward through ReLU -> Dense with random upstream gradient
+    dUp = rng.standard_normal(out2.shape).astype("float32")
+    dRelu = relu.backward(dUp)
+    dX = dense.backward(dRelu)
+
+    print("Dense forward shape:", out1.shape)
+    print("ReLU forward shape:", out2.shape)
+    print("dX shape:", dX.shape)
+    print("dW norm:", float(np.linalg.norm(dense.dW)))
+    print("db norm:", float(np.linalg.norm(dense.db)))
+
+    # Test Sigmoid/Tanh cache
+    sig = Sigmoid()
+    tanh = Tanh()
+    s = sig.forward(out1)
+    t = tanh.forward(out1)
+    ds = sig.backward(np.ones_like(s))
+    dt = tanh.backward(np.ones_like(t))
+    print("Sigmoid/Tanh backward mean magnitudes:", float(ds.mean()), float(dt.mean()))
+
+    # Softmax forward/backward demo
+    logits = rng.standard_normal((N, C)).astype("float32")
+    sm = Softmax(axis=1)
+    probs = sm.forward(logits)
+    y = to_one_hot(np.arange(C)[rng.integers(0, C, size=N)], num_classes=C)
+    # Upstream grad from CE is probs - y (assuming average over N done elsewhere)
+    dY = probs - y
+    dX = sm.backward(dY)
+    print("Softmax grad shape:", dX.shape, "mean:", float(dX.mean()))
+
+
+if __name__ == "__main__":
+    demo_dense_and_activations()
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\demo_losses.py ====
+# examples/demo_losses.py
+
+import numpy as np
+
+from src.losses import BinaryCrossEntropy, CategoricalCrossEntropy, MSELoss
+
+
+def demo_mse():
+    rng = np.random.default_rng(0)
+    y_pred = rng.standard_normal((5, 3)).astype("float32")
+    y_true = rng.standard_normal((5, 3)).astype("float32")
+    mse = MSELoss()
+    loss, grad = mse.forward_backward(y_pred, y_true)
+    print("MSE loss:", loss, "grad shape:", grad.shape)
+
+
+def demo_bce_logits():
+    rng = np.random.default_rng(1)
+    logits = rng.standard_normal((8, 1)).astype("float32")
+    y = (rng.random((8, 1)) > 0.5).astype("float32")
+    bce = BinaryCrossEntropy(from_logits=True)
+    loss, grad = bce.forward_backward(logits, y)
+    print("BCE (logits) loss:", loss, "grad mean:", float(grad.mean()))
+
+
+def demo_bce_probs():
+    rng = np.random.default_rng(2)
+    p = rng.random((8, 1)).astype("float32")
+    y = (rng.random((8, 1)) > 0.5).astype("float32")
+    bce = BinaryCrossEntropy(from_logits=False)
+    loss, grad = bce.forward_backward(p, y)
+    print("BCE (probs) loss:", loss, "grad mean:", float(grad.mean()))
+
+
+def demo_cce_logits():
+    rng = np.random.default_rng(3)
+    N, C = 6, 4
+    logits = rng.standard_normal((N, C)).astype("float32")
+    y_idx = rng.integers(0, C, size=N)
+    cce = CategoricalCrossEntropy(from_logits=True)
+    loss, grad = cce.forward_backward(logits, y_idx)
+    print("CCE (logits) loss:", loss, "grad shape:", grad.shape, "row sum:", float(np.abs(grad.sum(axis=1)).mean()))
+
+
+def demo_cce_probs_onehot():
+    rng = np.random.default_rng(4)
+    N, C = 5, 3
+    p = rng.random((N, C)).astype("float32")
+    p = p / p.sum(axis=1, keepdims=True)
+    y_onehot = np.eye(C, dtype="float32")[rng.integers(0, C, size=N)]
+    cce = CategoricalCrossEntropy(from_logits=False)
+    loss, grad = cce.forward_backward(p, y_onehot)
+    print("CCE (probs, onehot) loss:", loss, "grad norm:", float(np.linalg.norm(grad)))
+
+
+if __name__ == "__main__":
+    demo_mse()
+    demo_bce_logits()
+    demo_bce_probs()
+    demo_cce_logits()
+    demo_cce_probs_onehot()
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\demo_optim.py ====
+# examples/demo_optim.py
+
+import numpy as np
+
+from src.activations import ReLU
+from src.layers import Dense
+from src.losses import CategoricalCrossEntropy, MSELoss
+from src.model import Sequential
+from src.optim import Adam, SGD
+from src.utils import one_hot, set_seed, train_val_split
+
+
+def demo_sgd_nesterov():
+    set_seed(42)
+    N, D, C = 128, 20, 4
+    X = np.random.randn(N, D).astype("float32")
+    y_idx = np.random.randint(0, C, size=N)
+    y = one_hot(y_idx, C)
+
+    model = Sequential([
+        Dense(D, 64, weight_init="he_normal"),
+        ReLU(),
+        Dense(64, C, weight_init="xavier_uniform"),
+    ])
+    loss_fn = CategoricalCrossEntropy(from_logits=True)
+    opt = SGD(lr=0.05, momentum=0.9, nesterov=True, weight_decay=1e-4)
+
+    X_tr, y_tr, X_val, y_val = train_val_split(X, y, val_ratio=0.2, seed=7)
+
+    for epoch in range(5):
+        # Forward
+        logits = model.forward(X_tr, training=True)
+        loss, dlogits = loss_fn.forward_backward(logits, y_tr, backward=True)
+        # Backward
+        model.backward(dlogits)
+        # Step
+        opt.step(model.parameters())
+        # Zero grads
+        model.zero_grad()
+
+        # Eval
+        logits_val = model.forward(X_val, training=False)
+        val_loss, _ = loss_fn.forward_backward(logits_val, y_val, backward=False)
+        preds = logits_val.argmax(axis=1)
+        acc = (preds == y_val.argmax(axis=1)).mean()
+        print(f"[SGD+NAG] Epoch {epoch+1} | loss={loss:.4f} | val_loss={val_loss:.4f} | val_acc={acc:.3f}")
+
+
+def demo_adam_wd():
+    set_seed(0)
+    N, D, H = 200, 10, 32
+    X = np.random.randn(N, D).astype("float32")
+    true_W = np.random.randn(D, 1).astype("float32")
+    y = X @ true_W + 0.5 * np.random.randn(N, 1).astype("float32")
+
+    model = Sequential([
+        Dense(D, H, weight_init="xavier_uniform"),
+        ReLU(),
+        Dense(H, 1, weight_init="xavier_uniform"),
+    ])
+    mse = MSELoss()
+    opt = Adam(lr=1e-2, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4)
+
+    for step in range(20):
+        y_pred = model.forward(X, training=True)
+        loss, dypred = mse.forward_backward(y_pred, y, backward=True)
+        model.backward(dypred)
+        opt.step(model.parameters())
+        model.zero_grad()
+        if (step + 1) % 5 == 0:
+            print(f"[Adam] Step {step+1} | MSE={loss:.4f}")
+
+if __name__ == "__main__":
+    demo_sgd_nesterov()
+    demo_adam_wd()
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\demo_sequential.py ====
+# examples/demo_sequential.py
+
+import numpy as np
+
+from src.activations import ReLU, Softmax
+from src.layers import Dense
+from src.losses import CategoricalCrossEntropy, MSELoss
+from src.model import Sequential
+from src.utils import one_hot, set_seed, train_val_split
+
+
+def demo_classification():
+    set_seed(42)
+    N, D, C = 128, 10, 3
+    X = np.random.randn(N, D).astype("float32")
+    y_idx = np.random.randint(0, C, size=N)
+    y = one_hot(y_idx, C)
+
+    model = Sequential([
+        Dense(D, 32, weight_init="he_normal"),
+        ReLU(),
+        Dense(32, C, weight_init="xavier_uniform"),
+        # For stable training with CE, omit Softmax and use from_logits=True
+        # Softmax(),  # Uncomment if you prefer CE with probabilities
+    ])
+
+    loss_fn = CategoricalCrossEntropy(from_logits=True)
+
+    # Simple manual one-epoch SGD step with fixed lr, to demonstrate API
+    lr = 1e-1
+    X_tr, y_tr, X_val, y_val = train_val_split(X, y, val_ratio=0.2, seed=7)
+
+    # Forward
+    logits = model.forward(X_tr, training=True)
+    loss, dlogits = loss_fn.forward_backward(logits, y_tr, backward=True)
+
+    # Backward
+    model.backward(dlogits)
+
+    # Naive SGD update
+    for p in model.parameters():
+        p["param"][...] -= lr * p["grad"]
+
+    # Zero grads for next step
+    model.zero_grad()
+
+    # Evaluate
+    logits_val = model.forward(X_val, training=False)
+    val_loss, _ = loss_fn.forward_backward(logits_val, y_val, backward=False)
+    preds = logits_val.argmax(axis=1)
+    acc = (preds == y_val.argmax(axis=1)).mean()
+
+    print("Train loss:", float(loss))
+    print("Val loss:", float(val_loss), "Val acc:", float(acc))
+
+
+def demo_regression():
+    set_seed(0)
+    N, D, H = 64, 5, 16
+    X = np.random.randn(N, D).astype("float32")
+    true_W = np.random.randn(D, 1).astype("float32")
+    y = X @ true_W + 0.1 * np.random.randn(N, 1).astype("float32")
+
+    model = Sequential([
+        Dense(D, H, weight_init="xavier_uniform"),
+        ReLU(),
+        Dense(H, 1, weight_init="xavier_uniform"),
+    ])
+    mse = MSELoss()
+    lr = 1e-2
+
+    # One training step
+    y_pred = model.forward(X, training=True)
+    loss, dypred = mse.forward_backward(y_pred, y, backward=True)
+    model.backward(dypred)
+    for p in model.parameters():
+        p["param"][...] -= lr * p["grad"]
+    model.zero_grad()
+
+    print("Regression step MSE:", float(loss))
+
+
+if __name__ == "__main__":
+    demo_classification()
+    demo_regression()
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\demo_utils.py ====
+# examples/demo_utils.py
+
+import numpy as np
+
+from src.logger import CSVLogger, StdoutLogger
+from src.utils import (
+    batch_iterator,
+    one_hot,
+    set_seed,
+    shuffle_in_unison,
+    train_val_split,
+)
+
+def main():
+    set_seed(42)
+
+    # Dummy data
+    N, D, C = 23, 5, 3
+    X = np.random.randn(N, D).astype(np.float32)
+    y_idx = np.random.randint(0, C, size=N)
+    Y = one_hot(y_idx, C)
+
+    # Shuffle
+    Xs, Ys = shuffle_in_unison(X, Y, seed=7)
+
+    # Train/val split
+    X_tr, Y_tr, X_val, Y_val = train_val_split(Xs, Ys, val_ratio=0.3, seed=123)
+
+    # Iterate batches
+    slog = StdoutLogger()
+    slog.log(f"Train size: {X_tr.shape[0]}  | Val size: {X_val.shape[0]}")
+    for xb, yb in batch_iterator(X_tr, Y_tr, batch_size=8, shuffle=True, seed=999):
+        slog.log(f"Batch: X {xb.shape}, Y {yb.shape}")
+
+    # CSV logging
+    csv = CSVLogger("experiments/runs/demo/log.csv")
+    for epoch in range(3):
+        csv.log({"epoch": epoch + 1, "train_loss": float(np.random.rand()), "val_acc": float(np.random.rand())})
+    csv.close()
+    slog.log("Wrote logs to experiments/runs/demo/log.csv")
+
+if __name__ == "__main__":
+    main()
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\__init__.py ====
+# logger is simple csv + console
+# utils: seed setting, shuffling, batching, one hot, train/val split
+__all__ = ["logger", "utils","initializers", "tensor", "layers", "activations", "losses", "sequential", "model", "optim", "training", "metrics", "callbacks"]
+
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\activations.py ====
+from __future__ import annotations
+
+from typing import Optional
+
+import numpy as np
+
+from .tensor import assert_shape
+
+
+class Activation:
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        raise NotImplementedError
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+
+class ReLU(Activation):
+    """
+    ReLU with mask caching:
+      forward: Y = max(0, X)
+      backward: dX = dY * (X > 0)
+    """
+
+    def __init__(self):
+        self._mask: Optional[np.ndarray] = None
+
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        self._mask = X > 0
+        return X * self._mask
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        if self._mask is None:
+            raise RuntimeError("ReLU.backward called before forward.")
+        assert dY.shape == self._mask.shape, "Shape mismatch in ReLU backward"
+        return dY * self._mask
+
+
+class Sigmoid(Activation):
+    """
+    Sigmoid with output caching:
+      forward: Y = 1 / (1 + exp(-X))
+      backward: dX = dY * Y * (1 - Y)
+    Uses stable computations for large |X|.
+    """
+
+    def __init__(self):
+        self._Y: Optional[np.ndarray] = None
+
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        # Stable sigmoid: handle large negative and positive values
+        out = np.empty_like(X)
+        pos_mask = X >= 0
+        neg_mask = ~pos_mask
+
+        out[pos_mask] = 1.0 / (1.0 + np.exp(-X[pos_mask]))
+        exp_x = np.exp(X[neg_mask])
+        out[neg_mask] = exp_x / (1.0 + exp_x)
+
+        self._Y = out
+        return out
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        if self._Y is None:
+            raise RuntimeError("Sigmoid.backward called before forward.")
+        return dY * self._Y * (1.0 - self._Y)
+
+
+class Tanh(Activation):
+    """
+    Tanh with output caching:
+      forward: Y = tanh(X)
+      backward: dX = dY * (1 - Y^2)
+    """
+
+    def __init__(self):
+        self._Y: Optional[np.ndarray] = None
+
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        Y = np.tanh(X)
+        self._Y = Y
+        return Y
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        if self._Y is None:
+            raise RuntimeError("Tanh.backward called before forward.")
+        return dY * (1.0 - self._Y**2)
+
+
+class Softmax(Activation):
+    """
+    Stable softmax with log-sum-exp trick.
+
+    forward:
+      For each row i:
+        z = X[i] - max(X[i])
+        exp_z = exp(z)
+        Y[i] = exp_z / sum(exp_z)
+
+    backward:
+      Given upstream gradient dY (dL/dY), general Jacobian-vector product:
+        dX = Y * (dY - sum(dY * Y, axis=1, keepdims=True))
+
+      Note:
+      - When used with Categorical Cross-Entropy with logits, prefer a fused
+        loss that directly computes dX = (softmax - one_hot) / N for stability.
+        In that case you typically do NOT include a Softmax layer in the model.
+    """
+
+    def __init__(self, axis: int = 1):
+        self.axis = axis
+        self._Y: Optional[np.ndarray] = None
+
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        # Move softmax axis to last for stable operations, then move back
+        if self.axis < 0:
+            axis = X.ndim + self.axis
+        else:
+            axis = self.axis
+
+        # For common case of 2D (N, C) with axis=1, simplify:
+        if X.ndim == 2 and axis == 1:
+            X_shift = X - X.max(axis=1, keepdims=True)
+            exp_x = np.exp(X_shift)
+            Y = exp_x / exp_x.sum(axis=1, keepdims=True)
+            self._Y = Y
+            return Y
+
+        # Generic case
+        X_shift = X - np.max(X, axis=axis, keepdims=True)
+        exp_x = np.exp(X_shift)
+        denom = np.sum(exp_x, axis=axis, keepdims=True)
+        Y = exp_x / denom
+        self._Y = Y
+        return Y
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        if self._Y is None:
+            raise RuntimeError("Softmax.backward called before forward.")
+        Y = self._Y
+
+        # For 2D case with axis=1: efficient formula
+        if Y.ndim == 2 and self.axis in (1, -1):
+            dot = (dY * Y).sum(axis=1, keepdims=True)  # (N, 1)
+            dX = Y * (dY - dot)
+            return dX
+
+        # Generic case
+        dot = np.sum(dY * Y, axis=self.axis, keepdims=True)
+        dX = Y * (dY - dot)
+        return dX
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\callbacks.py ====
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Optional
+
+
+class Callback:
+    def on_train_begin(self): ...
+    def on_epoch_begin(self, epoch: int): ...
+    def on_batch_end(self, batch: int, logs: Dict): ...
+    def on_epoch_end(self, epoch: int, logs: Dict): ...
+    def on_train_end(self): ...
+
+
+@dataclass
+class EarlyStopping(Callback):
+    monitor: str = "val_loss"
+    patience: int = 10
+    mode: str = "min"  # "min" or "max"
+    best: Optional[float] = None
+    wait: int = 0
+    stopped_epoch: Optional[int] = None
+    stop_training: bool = False
+
+    def on_train_begin(self):
+        self.best = None
+        self.wait = 0
+        self.stopped_epoch = None
+        self.stop_training = False
+
+    def on_epoch_end(self, epoch: int, logs: Dict):
+        value = logs.get(self.monitor)
+        if value is None:
+            return
+        better = (value < self.best) if (self.best is not None and self.mode == "min") else \
+                 (value > self.best) if (self.best is not None and self.mode == "max") else True
+        if better:
+            self.best = value
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                self.stopped_epoch = epoch
+                self.stop_training = True
+
+
+@dataclass
+class ReduceLROnPlateau(Callback):
+    monitor: str = "val_loss"
+    factor: float = 0.1
+    patience: int = 5
+    min_lr: float = 0.0
+    mode: str = "min"
+    best: Optional[float] = None
+    wait: int = 0
+
+    def __init__(self, optimizer, monitor="val_loss", factor=0.1, patience=5, min_lr=0.0, mode="min"):
+        self.optimizer = optimizer
+        self.monitor = monitor
+        self.factor = factor
+        self.patience = patience
+        self.min_lr = min_lr
+        self.mode = mode
+        self.best = None
+        self.wait = 0
+
+    def on_epoch_end(self, epoch: int, logs: Dict):
+        value = logs.get(self.monitor)
+        if value is None:
+            return
+        better = (value < self.best) if (self.best is not None and self.mode == "min") else \
+                 (value > self.best) if (self.best is not None and self.mode == "max") else True
+        if better:
+            self.best = value
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                # Reduce lr
+                if hasattr(self.optimizer, "lr"):
+                    new_lr = max(self.optimizer.lr * self.factor, self.min_lr)
+                    self.optimizer.lr = new_lr
+                self.wait = 0
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\data.py ====
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Dict, Optional, Tuple, Union
+
+import numpy as np
+import pandas as pd
+
+from .utils import normalize_minmax, train_val_split
+
+
+Array = np.ndarray
+
+
+@dataclass
+class DatasetSplit:
+    X_train: Array
+    y_train: Array
+    X_val: Array
+    y_val: Array
+    X_test: Optional[Array] = None
+    y_test: Optional[Array] = None
+
+
+def load_iris_pandas(
+    csv_path: str,
+    feature_cols: Optional[list[str]] = None,
+    target_col: Optional[str] = None,
+    shuffle: bool = True,
+    seed: Optional[int] = 42,
+    val_ratio: float = 0.2,
+    test_ratio: float = 0.0,
+    normalize: bool = True,
+) -> DatasetSplit:
+    """
+    Load Iris dataset from a local CSV using pandas.
+
+    Assumptions:
+      - If target_col is None, tries 'target' or 'species'.
+      - If feature_cols is None, uses all numeric columns except target.
+
+    Returns float32 features and int labels.
+    """
+    df = pd.read_csv(csv_path)
+    # Infer target column
+    if target_col is None:
+        for cand in ["target", "species", "label", "class"]:
+            if cand in df.columns:
+                target_col = cand
+                break
+    if target_col is None:
+        raise ValueError("Could not infer target column; please specify target_col.")
+
+    if feature_cols is None:
+        feature_cols = [c for c in df.columns if c != target_col and pd.api.types.is_numeric_dtype(df[c])]
+
+    X = df[feature_cols].to_numpy(dtype="float32")
+    y_raw = df[target_col]
+    if pd.api.types.is_numeric_dtype(y_raw):
+        y = y_raw.to_numpy()
+    else:
+        # factorize classes into 0..C-1
+        y, _ = pd.factorize(y_raw)
+    y = y.astype("int64")
+
+    # Normalize features to [0,1] per column if requested
+    if normalize:
+        X = normalize_minmax(X, axis=0)
+
+    # Shuffle
+    N = X.shape[0]
+    idx = np.arange(N)
+    if shuffle:
+        if seed is not None:
+            rng_state = np.random.get_state()
+            np.random.seed(int(seed))
+        np.random.shuffle(idx)
+        if seed is not None:
+            np.random.set_state(rng_state)
+    X = X[idx]
+    y = y[idx]
+
+    # Split into train/val/test
+    if not (0 <= test_ratio < 1) or not (0 < val_ratio < 1):
+        raise ValueError("val_ratio in (0,1) and test_ratio in [0,1) required.")
+    if test_ratio > 0:
+        split_test = int((1 - test_ratio) * N)
+        X_rem, X_test = X[:split_test], X[split_test:]
+        y_rem, y_test = y[:split_test], y[split_test:]
+    else:
+        X_rem, y_rem = X, y
+        X_test, y_test = None, None
+
+    X_train, y_train, X_val, y_val = train_val_split(X_rem, y_rem, val_ratio=val_ratio, seed=seed, shuffle=True)
+    return DatasetSplit(X_train, y_train, X_val, y_val, X_test, y_test)
+
+
+def load_mnist_npz(
+    npz_path: str,
+    split: str = "train",  # "train" or "test"
+    normalize: bool = True,
+) -> Tuple[Array, Array]:
+    """
+    Load MNIST from a local NPZ file. Expected keys:
+      - For common numpy mnist.npz: x_train, y_train, x_test, y_test
+    Returns:
+      X: (N, 784) float32 if grayscale 28x28, normalized to [0,1] if requested
+      y: (N,) int64 labels
+    """
+    data = np.load(npz_path)
+    if split == "train":
+        X = data["x_train"]
+        y = data["y_train"]
+    elif split == "test":
+        X = data["x_test"]
+        y = data["y_test"]
+    else:
+        raise ValueError("split must be 'train' or 'test'")
+
+    # Flatten if needed
+    if X.ndim == 3:  # (N, H, W)
+        X = X.reshape(X.shape[0], -1)
+    elif X.ndim == 4:  # (N, H, W, C)
+        X = X.reshape(X.shape[0], -1)
+
+    X = X.astype("float32")
+    if normalize:
+        # MNIST pixel range typically 0..255
+        X /= 255.0
+        X = np.clip(X, 0.0, 1.0)
+    y = y.astype("int64")
+    return X, y
+
+
+def load_mnist_csv(
+    csv_path: str,
+    has_header: bool = True,
+    label_first: bool = True,
+    normalize: bool = True,
+) -> Tuple[Array, Array]:
+    """
+    Load MNIST from a local CSV:
+      - If label_first=True, assumes first column is label, rest are pixels.
+      - Otherwise, last column is label.
+
+    Returns:
+      X: (N, 784) float32 normalized to [0,1] if requested
+      y: (N,) int64 labels
+    """
+    df = pd.read_csv(csv_path, header=0 if has_header else None)
+    if label_first:
+        y = df.iloc[:, 0].to_numpy().astype("int64")
+        X = df.iloc[:, 1:].to_numpy().astype("float32")
+    else:
+        y = df.iloc[:, -1].to_numpy().astype("int64")
+        X = df.iloc[:, :-1].to_numpy().astype("float32")
+
+    if normalize:
+        X /= 255.0
+        X = np.clip(X, 0.0, 1.0)
+    return X, y
+
+
+def split_train_val_test(
+    X: Array,
+    y: Array,
+    val_ratio: float = 0.1,
+    test_ratio: float = 0.1,
+    shuffle: bool = True,
+    seed: Optional[int] = 42,
+) -> DatasetSplit:
+    """
+    Generic split into train/val/test with shuffling and seed.
+    """
+    N = X.shape[0]
+    idx = np.arange(N)
+    if shuffle:
+        if seed is not None:
+            rng_state = np.random.get_state()
+            np.random.seed(int(seed))
+        np.random.shuffle(idx)
+        if seed is not None:
+            np.random.set_state(rng_state)
+    X = X[idx]
+    y = y[idx]
+
+    if not (0 <= test_ratio < 1) or not (0 < val_ratio < 1):
+        raise ValueError("val_ratio in (0,1) and test_ratio in [0,1) required.")
+    n_test = int(np.floor(test_ratio * N))
+    n_val = int(np.floor(val_ratio * (N - n_test)))
+    n_train = N - n_test - n_val
+
+    X_train, y_train = X[:n_train], y[:n_train]
+    X_val, y_val = X[n_train:n_train + n_val], y[n_train:n_train + n_val]
+    X_test, y_test = X[n_train + n_val:], y[n_train + n_val:]
+    return DatasetSplit(X_train, y_train, X_val, y_val, X_test, y_test)
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\initializers.py ====
+# src/initializers.py
+
+from __future__ import annotations
+
+import math
+from typing import Tuple
+
+import numpy as np
+
+
+def zeros(shape: Tuple[int, ...], dtype: str = "float32") -> np.ndarray:
+    """
+    Return an array of zeros with given shape and dtype.
+    """
+    return np.zeros(shape, dtype=dtype)
+
+
+def xavier_uniform(
+    shape: Tuple[int, ...],
+    gain: float = 1.0,
+    dtype: str = "float32",
+    seed: int | None = None,
+) -> np.ndarray:
+    """
+    Xavier/Glorot uniform initialization.
+
+    For weight matrix of shape (fan_in, fan_out), samples from U(-a, a),
+    where a = gain * sqrt(6 / (fan_in + fan_out)).
+
+    Supports tensors; fans are computed from the first two dims when available.
+    """
+    if seed is not None:
+        rng_state = np.random.get_state()
+        np.random.seed(seed)
+    fan_in, fan_out = _compute_fans(shape)
+    limit = gain * math.sqrt(6.0 / (fan_in + fan_out))
+    arr = np.random.uniform(-limit, limit, size=shape).astype(dtype)
+    if seed is not None:
+        np.random.set_state(rng_state)
+    return arr
+
+
+def he_normal(
+    shape: Tuple[int, ...],
+    gain: float = 1.0,
+    dtype: str = "float32",
+    seed: int | None = None,
+) -> np.ndarray:
+    """
+    He/Kaiming normal initialization.
+
+    For weight matrix of shape (fan_in, fan_out), samples from N(0, std^2),
+    where std = gain * sqrt(2 / fan_in). Suitable for ReLU-family activations.
+    """
+    if seed is not None:
+        rng_state = np.random.get_state()
+        np.random.seed(seed)
+    fan_in, _ = _compute_fans(shape)
+    std = gain * math.sqrt(2.0 / fan_in) if fan_in > 0 else 1.0
+    arr = (np.random.randn(*shape) * std).astype(dtype)
+    if seed is not None:
+        np.random.set_state(rng_state)
+    return arr
+
+
+def _compute_fans(shape: Tuple[int, ...]) -> Tuple[int, int]:
+    """
+    Compute fan_in and fan_out from tensor shape.
+    - For Linear weights (fan_in, fan_out)
+    - For Conv weights (out_channels, in_channels, k1, k2, ...)
+    """
+    if len(shape) == 0:
+        return 1, 1
+    if len(shape) == 1:
+        fan_in = shape[0]
+        fan_out = shape[0]
+        return fan_in, fan_out
+    if len(shape) == 2:
+        fan_in, fan_out = shape[0], shape[1]
+        return fan_in, fan_out
+    # Conv-like
+    receptive_field_size = 1
+    for s in shape[2:]:
+        receptive_field_size *= s
+    fan_in = shape[1] * receptive_field_size
+    fan_out = shape[0] * receptive_field_size
+    return fan_in, fan_out
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\layers.py ====
+# src/layers.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
+
+import numpy as np
+
+from .initializers import he_normal, xavier_uniform, zeros
+from .tensor import assert_shape
+
+
+class Layer:
+    """
+    Base class for layers. Each layer that has parameters should expose:
+      - parameters(): list of dicts with "param" and "grad" numpy arrays
+      - zero_grad(): set grads to zero
+    """
+
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        raise NotImplementedError
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+    def parameters(self) -> List[Dict[str, np.ndarray]]:
+        return []
+
+    def zero_grad(self) -> None:
+        pass
+
+
+@dataclass
+class Dense(Layer):
+    in_features: int
+    out_features: int
+    weight_init: str = "xavier_uniform"
+    bias_init: str = "zeros"
+    dtype: str = "float32"
+
+    W: np.ndarray = field(init=False)
+    b: np.ndarray = field(init=False)
+    dW: np.ndarray = field(init=False)
+    db: np.ndarray = field(init=False)
+    _cache_X: np.ndarray = field(init=False, default=None, repr=False)
+
+    def __post_init__(self):
+        if self.weight_init == "xavier_uniform":
+            self.W = xavier_uniform((self.in_features, self.out_features), dtype=self.dtype)
+        elif self.weight_init == "he_normal":
+            self.W = he_normal((self.in_features, self.out_features), dtype=self.dtype)
+        else:
+            raise ValueError(f"Unknown weight_init: {self.weight_init}")
+
+        if self.bias_init == "zeros":
+            self.b = zeros((self.out_features,), dtype=self.dtype)
+        else:
+            raise ValueError(f"Unknown bias_init: {self.bias_init}")
+
+        self.dW = zeros(self.W.shape, dtype=self.dtype)
+        self.db = zeros(self.b.shape, dtype=self.dtype)
+
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        # X: (N, D), W: (D, H), b: (H,)
+        assert_shape(X, (None, self.in_features), name="Dense.forward.X")
+        self._cache_X = X
+        out = X @ self.W + self.b  # (N, H)
+        return out
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        # dY: (N, H)
+        X = self._cache_X
+        if X is None:
+            raise RuntimeError("Dense.backward called before forward.")
+        assert_shape(dY, (None, self.out_features), name="Dense.backward.dY")
+
+        # Gradients
+        # dW = X^T @ dY, db = sum over batch, dX = dY @ W^T
+        self.dW[...] = X.T @ dY  # (D, N) @ (N, H) -> (D, H)
+        self.db[...] = dY.sum(axis=0)  # (H,)
+        dX = dY @ self.W.T  # (N, H) @ (H, D) -> (N, D)
+        return dX
+
+    def parameters(self) -> List[Dict[str, np.ndarray]]:
+        return [
+            {"param": self.W, "grad": self.dW},
+            {"param": self.b, "grad": self.db},
+        ]
+
+    def zero_grad(self) -> None:
+        self.dW.fill(0.0)
+        self.db.fill(0.0)
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\logger.py ====
+# src/logger.py
+
+import csv
+import os
+import sys
+import time
+from typing import Dict, Optional, TextIO
+
+
+class CSVLogger:
+    """
+    Minimal CSV logger that writes metrics per step/epoch.
+
+    Usage:
+        logger = CSVLogger(filepath="experiments/runs/run1/log.csv")
+        logger.log({"epoch": 1, "train_loss": 0.52, "val_acc": 0.81})
+        logger.close()
+    """
+
+    def __init__(self, filepath: str, append: bool = False, flush: bool = True):
+        self.filepath = filepath
+        self.append = append
+        self.flush = flush
+        self._fieldnames = None  # type: Optional[list[str]]
+        self._fh = None  # type: Optional[TextIO]
+        self._writer = None  # csv.DictWriter
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        mode = "a" if append and os.path.exists(filepath) else "w"
+        self._fh = open(filepath, mode, newline="", encoding="utf-8")
+        self._writer = None
+
+    def log(self, row: Dict):
+        if self._writer is None:
+            # Initialize writer with the first row's keys (ordered)
+            self._fieldnames = list(row.keys())
+            self._writer = csv.DictWriter(self._fh, fieldnames=self._fieldnames)
+            self._writer.writeheader()
+        else:
+            # Ensure consistent columns; fill missing keys with None
+            for k in self._fieldnames:
+                if k not in row:
+                    row[k] = None
+            # Add new keys if needed (rare; safer to keep stable schema)
+            extra_keys = [k for k in row.keys() if k not in self._fieldnames]
+            if extra_keys:
+                # Rebuild file with new header (simple approach: close and raise)
+                raise ValueError(
+                    f"CSVLogger received unknown keys after initialization: {extra_keys}. "
+                    f"Keep a stable set of columns per run."
+                )
+
+        self._writer.writerow(row)
+        if self.flush:
+            self._fh.flush()
+
+    def close(self):
+        if self._fh:
+            self._fh.close()
+            self._fh = None
+
+
+class StdoutLogger:
+    """
+    Simple stdout logger with timestamp prefix.
+
+    Usage:
+        slog = StdoutLogger()
+        slog.log("Epoch 1 | loss=0.52 | acc=0.81")
+    """
+
+    def __init__(self, stream: TextIO = sys.stdout, timefmt: str = "%Y-%m-%d %H:%M:%S"):
+        self.stream = stream
+        self.timefmt = timefmt
+
+    def log(self, msg: str):
+        ts = time.strftime(self.timefmt, time.localtime())
+        self.stream.write(f"[{ts}] {msg}\n")
+        self.stream.flush()
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\losses.py ====
+# src/losses.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional, Tuple, Union
+
+import numpy as np
+
+Array = np.ndarray
+
+
+def _ensure_2d_probs(y_pred: Array) -> Array:
+    if y_pred.ndim != 2:
+        raise ValueError(f"Expected 2D array of shape (N, C). Got {y_pred.shape}")
+    return y_pred
+
+
+def _as_one_hot_or_indices(y_true: Array, num_classes: Optional[int] = None) -> Tuple[Array, bool]:
+    """
+    Normalize targets to either:
+      - (N, C) one-hot matrix and flag True
+      - (N,) class indices and flag False
+    """
+    y_true = np.asarray(y_true)
+    if y_true.ndim == 2:
+        # One-hot-like
+        return y_true, True
+    if y_true.ndim == 1:
+        if num_classes is not None and y_true.max() >= num_classes:
+            raise ValueError("y_true contains class index >= num_classes.")
+        return y_true.astype(int), False
+    raise ValueError(f"y_true must be shape (N,) or (N, C). Got {y_true.shape}")
+
+
+def _safe_mean(x: Array) -> float:
+    return float(np.mean(x)) if x.size > 0 else 0.0
+
+
+@dataclass
+class MSELoss:
+    """
+    Mean Squared Error:
+      L = mean((y_pred - y_true)^2)
+
+    forward_backward(y_pred, y_true, backward=True) ->
+      returns (loss_scalar, dL/dy_pred if backward else None)
+    """
+
+    reduction: str = "mean"  # currently only mean is supported
+
+    def forward_backward(self, y_pred: Array, y_true: Array, backward: bool = True):
+        y_pred = np.asarray(y_pred)
+        y_true = np.asarray(y_true)
+        if y_pred.shape != y_true.shape:
+            raise ValueError(f"MSELoss: y_pred and y_true must have same shape. {y_pred.shape} vs {y_true.shape}")
+        diff = y_pred - y_true
+        loss = _safe_mean(diff * diff)
+        if not backward:
+            return loss, None
+        # d/dy (mean(diff^2)) = 2*diff / N_elements
+        denom = np.prod(y_pred.shape, dtype=np.float64)
+        grad = (2.0 / denom) * diff
+        return loss, grad
+
+
+@dataclass
+class BinaryCrossEntropy:
+    """
+    Binary cross-entropy for binary classification per example:
+      L = -mean( y*log(p) + (1-y)*log(1-p) )
+
+    Stable implementation: compute using logits if provided, or probabilities with clamping.
+    You can pass:
+      - logits: set from_logits=True (preferred)
+      - probabilities in (0,1): set from_logits=False
+
+    Targets y_true can be 0/1 floats with the same shape as y_pred.
+
+    If from_logits:
+      L = mean( max(z,0) - z*y + log(1 + exp(-|z|)) )
+      grad wrt logits: sigmoid(z) - y, then average over N
+    """
+
+    from_logits: bool = True
+    eps: float = 1e-12
+
+    def _sigmoid(self, z: Array) -> Array:
+        out = np.empty_like(z)
+        pos = z >= 0
+        neg = ~pos
+        out[pos] = 1.0 / (1.0 + np.exp(-z[pos]))
+        ez = np.exp(z[neg])
+        out[neg] = ez / (1.0 + ez)
+        return out
+
+    def forward_backward(self, y_pred: Array, y_true: Array, backward: bool = True):
+        y_pred = np.asarray(y_pred)
+        y_true = np.asarray(y_true)
+        if y_pred.shape != y_true.shape:
+            raise ValueError(f"BinaryCrossEntropy: y_pred and y_true must have same shape. {y_pred.shape} vs {y_true.shape}")
+        N = y_pred.shape[0] if y_pred.ndim >= 1 else y_pred.size
+        N = max(N, 1)
+
+        if self.from_logits:
+            z = y_pred
+            # Loss: mean(max(z,0) - z*y + log(1 + exp(-|z|)))
+            abs_z = np.abs(z)
+            loss_vec = np.maximum(z, 0) - z * y_true + np.log1p(np.exp(-abs_z))
+            loss = _safe_mean(loss_vec)
+            if not backward:
+                return loss, None
+            # dL/dz = sigmoid(z) - y; then divide by N elements per-sample. For mean over batch, divide by N
+            grad = (self._sigmoid(z) - y_true) / N
+            return loss, grad.astype(y_pred.dtype)
+        else:
+            # y_pred are probabilities; clamp for stability
+            p = np.clip(y_pred, self.eps, 1.0 - self.eps)
+            loss_vec = -(y_true * np.log(p) + (1.0 - y_true) * np.log(1.0 - p))
+            loss = _safe_mean(loss_vec)
+            if not backward:
+                return loss, None
+            grad = (p - y_true) / (p * (1.0 - p) + self.eps)
+            grad = grad / N
+            return loss, grad.astype(y_pred.dtype)
+
+
+@dataclass
+class CategoricalCrossEntropy:
+    """
+    Categorical Cross-Entropy for multi-class classification.
+
+    Usage:
+      - from_logits=True (preferred): pass raw scores (logits) of shape (N, C).
+        Stable computation via log-softmax:
+          loss_i = -log_softmax(z_i)[y_i]
+        Grad:
+          dL/dz = (softmax(z) - one_hot(y)) / N
+
+      - from_logits=False: pass probabilities of shape (N, C).
+        Loss:
+          loss_i = -sum_j y_ij * log(p_ij)
+        Grad:
+          dL/dp = -(y / p) / N
+
+    Targets:
+      - y_true shape (N,) with class indices
+      - or y_true shape (N, C) one-hot
+
+    By default uses mean reduction across batch.
+    """
+
+    from_logits: bool = True
+    eps: float = 1e-12
+
+    def _log_softmax(self, z: Array) -> Array:
+        z = _ensure_2d_probs(z)
+        z_shift = z - z.max(axis=1, keepdims=True)
+        logsumexp = np.log(np.exp(z_shift).sum(axis=1, keepdims=True))
+        return z_shift - logsumexp  # shape (N, C)
+
+    def _softmax(self, z: Array) -> Array:
+        z = _ensure_2d_probs(z)
+        z_shift = z - z.max(axis=1, keepdims=True)
+        exp_z = np.exp(z_shift)
+        return exp_z / exp_z.sum(axis=1, keepdims=True)
+
+    def forward_backward(
+        self,
+        y_pred: Array,
+        y_true: Union[Array, np.ndarray],
+        backward: bool = True,
+    ):
+        z_or_p = np.asarray(y_pred)
+        if z_or_p.ndim != 2:
+            raise ValueError(f"CategoricalCrossEntropy expects (N, C). Got {z_or_p.shape}")
+        N, C = z_or_p.shape
+        y_t, is_one_hot = _as_one_hot_or_indices(np.asarray(y_true), num_classes=C)
+
+        if self.from_logits:
+            # Loss via log-softmax
+            log_probs = self._log_softmax(z_or_p)  # (N, C)
+            if is_one_hot:
+                # Sum over classes
+                loss_vec = -np.sum(y_t * log_probs, axis=1)
+            else:
+                # Index per row
+                loss_vec = -log_probs[np.arange(N), y_t]
+            loss = _safe_mean(loss_vec)
+            if not backward:
+                return loss, None
+            # Grad wrt logits: softmax - one_hot
+            probs = np.exp(log_probs)  # softmax
+            if is_one_hot:
+                grad = (probs - y_t) / N
+            else:
+                grad = probs
+                grad[np.arange(N), y_t] -= 1.0
+                grad /= N
+            return loss, grad.astype(z_or_p.dtype)
+        else:
+            # y_pred are probabilities
+            p = np.clip(z_or_p, self.eps, 1.0)  # ensure positive
+            if is_one_hot:
+                loss_vec = -np.sum(y_t * np.log(p + self.eps), axis=1)
+            else:
+                loss_vec = -np.log(p[np.arange(N), y_t] + self.eps)
+            loss = _safe_mean(loss_vec)
+            if not backward:
+                return loss, None
+            if is_one_hot:
+                grad = -(y_t / (p + self.eps)) / N
+            else:
+                grad = np.zeros_like(p)
+                grad[np.arange(N), y_t] = -1.0 / (p[np.arange(N), y_t] + self.eps)
+                grad /= N
+            return loss, grad.astype(z_or_p.dtype)
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\metrics.py ====
+# src/metrics.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, Optional, Tuple
+
+import numpy as np
+
+Array = np.ndarray
+
+
+def accuracy(
+    y_pred: Array,
+    y_true: Array,
+    task: Literal["multiclass", "binary"] = "multiclass",
+    threshold: float = 0.5,
+) -> float:
+    """
+    Compute accuracy for classification.
+
+    - multiclass:
+        y_pred: (N, C) scores or probabilities
+        y_true: (N,) class indices or (N, C) one-hot
+    - binary:
+        y_pred: (N, 1) logits/probs or (N,) values
+        y_true: (N, 1) or (N,) binary labels in {0,1}
+
+    Returns:
+        float accuracy in [0,1]
+    """
+    y_true = np.asarray(y_true)
+
+    if task == "multiclass":
+        if y_pred.ndim != 2:
+            raise ValueError(f"y_pred must be 2D for multiclass. Got {y_pred.shape}")
+        preds = y_pred.argmax(axis=1)
+        if y_true.ndim == 2:
+            y_true_idx = y_true.argmax(axis=1)
+        else:
+            y_true_idx = y_true.astype(int)
+        return float((preds == y_true_idx).mean())
+
+    # binary
+    yp = np.asarray(y_pred).squeeze()
+    yt = y_true.squeeze().astype(int)
+    # If shape is (N,), works; if (N,1), squeeze handles it.
+    if yp.ndim != 1:
+        raise ValueError(f"Binary y_pred must be 1D after squeeze. Got {yp.shape}")
+    # If values look like logits or probs, threshold applies the same to probs/logits if user passes probs
+    # For logits, caller should pass sigmoid(logits) here if needed; to keep generic we treat as probs.
+    preds = (yp >= threshold).astype(int)
+    return float((preds == yt).mean())
+
+
+def confusion_matrix(
+    y_pred: Array,
+    y_true: Array,
+    num_classes: Optional[int] = None,
+) -> Array:
+    """
+    Multiclass confusion matrix.
+
+    y_pred: (N, C) scores/probs
+    y_true: (N,) indices or (N, C) one-hot
+
+    Returns:
+        (C, C) matrix where rows=true class, cols=predicted class.
+    """
+    if y_pred.ndim != 2:
+        raise ValueError(f"y_pred must be (N, C), got {y_pred.shape}")
+    N, C = y_pred.shape
+    if num_classes is None:
+        num_classes = C
+    preds = y_pred.argmax(axis=1)
+    yt = np.asarray(y_true)
+    if yt.ndim == 2:
+        yt = yt.argmax(axis=1)
+    cm = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for t, p in zip(yt, preds):
+        cm[int(t), int(p)] += 1
+    return cm
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\model.py ====
+# src/model.py
+
+from __future__ import annotations
+
+from typing import Dict, Iterable, List, Sequence
+
+import numpy as np
+
+
+class Sequential:
+    """
+    Minimal Sequential container.
+
+    Features:
+      - add(layer): append a layer
+      - forward(X, training=True): pass through layers
+      - backward(dY): backpropagate through layers in reverse
+      - parameters(): yield parameter dicts {"param": ndarray, "grad": ndarray}
+      - zero_grad(): set all parameter grads to zero
+      - __call__(X, training=True) -> forward convenience
+    """
+
+    def __init__(self, layers: Sequence[object] | None = None):
+        self.layers: List[object] = []
+        if layers is not None:
+            for layer in layers:
+                self.add(layer)
+
+    def add(self, layer: object) -> None:
+        # Expect each layer to implement forward, backward, parameters, zero_grad (if it has params)
+        missing = [name for name in ("forward", "backward") if not hasattr(layer, name)]
+        if missing:
+            raise TypeError(f"Layer is missing required methods: {missing}")
+        self.layers.append(layer)
+
+    def forward(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        out = X
+        for layer in self.layers:
+            out = layer.forward(out, training=training)
+        return out
+
+    def backward(self, dY: np.ndarray) -> np.ndarray:
+        grad = dY
+        for layer in reversed(self.layers):
+            grad = layer.backward(grad)
+        return grad
+
+    def parameters(self) -> Iterable[Dict[str, np.ndarray]]:
+        """
+        Iterate over all trainable parameters across layers.
+        Each parameter is a dict containing:
+          - "param": np.ndarray (weights/biases)
+          - "grad":  np.ndarray (same shape as param)
+        """
+        for layer in self.layers:
+            if hasattr(layer, "parameters"):
+                for p in layer.parameters():
+                    yield p
+
+    def zero_grad(self) -> None:
+        for layer in self.layers:
+            if hasattr(layer, "zero_grad"):
+                layer.zero_grad()
+
+    # Convenience
+    def __call__(self, X: np.ndarray, training: bool = True) -> np.ndarray:
+        return self.forward(X, training=training)
+
+    def __len__(self) -> int:
+        return len(self.layers)
+
+    def __repr__(self) -> str:
+        lines = [f"{self.__class__.__name__}("]
+        for i, layer in enumerate(self.layers):
+            lines.append(f"  ({i}): {layer.__class__.__name__}")
+        lines.append(")")
+        return "\n".join(lines)
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\optim.py ====
+# src/optim.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Optional
+
+import numpy as np
+
+Param = Dict[str, np.ndarray]
+
+
+def _as_param_list(params: Iterable[Param]) -> List[Param]:
+    # Materialize generator to list for state alignment
+    pl = list(params)
+    # Validate expected keys
+    for i, p in enumerate(pl):
+        if not isinstance(p, dict) or "param" not in p or "grad" not in p:
+            raise TypeError(f"Parameter at index {i} must be a dict with 'param' and 'grad' ndarrays.")
+        if not isinstance(p["param"], np.ndarray) or not isinstance(p["grad"], np.ndarray):
+            raise TypeError(f"Parameter at index {i} 'param' and 'grad' must be np.ndarray.")
+        if p["param"].shape != p["grad"].shape:
+            raise ValueError(f"Parameter and grad shapes differ at index {i}: {p['param'].shape} vs {p['grad'].shape}")
+    return pl
+
+
+@dataclass
+class SGD:
+    """
+    Stochastic Gradient Descent with momentum, optional Nesterov, and weight decay.
+
+    - lr: learning rate
+    - momentum: if > 0, uses classical momentum v = mu*v - lr*g
+    - nesterov: if True, uses Nesterov accelerated gradient
+    - weight_decay: L2 regularization (decoupled): param <- param - lr * wd * param
+
+    Update rules (per parameter p):
+      if weight_decay > 0:
+        p <- p - lr * weight_decay * p        # decoupled weight decay
+
+      g <- grad
+      if momentum == 0:
+        p <- p - lr * g
+      else:
+        v <- mu * v + g
+        if nesterov:
+          p <- p - lr * (mu * v + g)
+        else:
+          p <- p - lr * v
+    """
+
+    lr: float = 1e-2
+    momentum: float = 0.0
+    nesterov: bool = False
+    weight_decay: float = 0.0
+
+    # State
+    _velocities: List[np.ndarray] = field(default_factory=list, init=False)
+    _initialized: bool = field(default=False, init=False)
+
+    def _init_state(self, params: List[Param]) -> None:
+        self._velocities = [np.zeros_like(p["param"]) for p in params]
+        self._initialized = True
+
+    def step(self, params_iter: Iterable[Param]) -> None:
+        params = _as_param_list(params_iter)
+        if not self._initialized:
+            self._init_state(params)
+
+        mu = float(self.momentum)
+        wd = float(self.weight_decay)
+        lr = float(self.lr)
+
+        for i, p in enumerate(params):
+            w = p["param"]
+            g = p["grad"]
+
+            # Decoupled weight decay
+            if wd != 0.0:
+                w[...] = w - lr * wd * w
+
+            if mu == 0.0:
+                # Vanilla SGD
+                w[...] = w - lr * g
+            else:
+                v = self._velocities[i]
+                # v = mu*v + g
+                v[...] = mu * v + g
+                if self.nesterov:
+                    # p <- p - lr * (mu*v + g)
+                    w[...] = w - lr * (mu * v + g)
+                else:
+                    # p <- p - lr * v
+                    w[...] = w - lr * v
+
+    def zero_state(self) -> None:
+        self._velocities = []
+        self._initialized = False
+
+
+@dataclass
+class Adam:
+    """
+    Adam optimizer with bias correction and decoupled weight decay.
+
+    Parameters:
+      - lr: learning rate (alpha)
+      - betas: (beta1, beta2) momentum terms
+      - eps: numerical stability term
+      - weight_decay: L2 regularization (decoupled); AdamW-style if > 0
+
+    Update (per parameter p):
+      if weight_decay > 0:
+        p <- p - lr * weight_decay * p        # decoupled weight decay
+
+      m <- beta1*m + (1 - beta1)*g
+      v <- beta2*v + (1 - beta2)*g^2
+      m_hat <- m / (1 - beta1^t)
+      v_hat <- v / (1 - beta2^t)
+      p <- p - lr * m_hat / (sqrt(v_hat) + eps)
+    """
+
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+
+    # State
+    _m: List[np.ndarray] = field(default_factory=list, init=False)
+    _v: List[np.ndarray] = field(default_factory=list, init=False)
+    _t: int = field(default=0, init=False)
+    _initialized: bool = field(default=False, init=False)
+
+    def _init_state(self, params: List[Param]) -> None:
+        self._m = [np.zeros_like(p["param"]) for p in params]
+        self._v = [np.zeros_like(p["param"]) for p in params]
+        self._t = 0
+        self._initialized = True
+
+    def step(self, params_iter: Iterable[Param]) -> None:
+        params = _as_param_list(params_iter)
+        if not self._initialized:
+            self._init_state(params)
+
+        beta1, beta2 = self.betas
+        beta1 = float(beta1)
+        beta2 = float(beta2)
+        lr = float(self.lr)
+        eps = float(self.eps)
+        wd = float(self.weight_decay)
+
+        # Time step
+        self._t += 1
+        t = self._t
+
+        # Precompute bias correction factors
+        bias_c1 = 1.0 - beta1**t
+        bias_c2 = 1.0 - beta2**t
+
+        for i, p in enumerate(params):
+            w = p["param"]
+            g = p["grad"]
+
+            # Decoupled weight decay
+            if wd != 0.0:
+                w[...] = w - lr * wd * w
+
+            m = self._m[i]
+            v = self._v[i]
+
+            # Update moments
+            m[...] = beta1 * m + (1.0 - beta1) * g
+            v[...] = beta2 * v + (1.0 - beta2) * (g * g)
+
+            # Bias-corrected moments
+            m_hat = m / bias_c1
+            v_hat = v / bias_c2
+
+            # Parameter update
+            w[...] = w - lr * (m_hat / (np.sqrt(v_hat) + eps))
+
+    def zero_state(self) -> None:
+        self._m = []
+        self._v = []
+        self._t = 0
+        self._initialized = False
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\tensor.py ====
+
+from __future__ import annotations
+
+from typing import Iterable, Optional, Sequence
+
+import numpy as np
+
+
+def assert_shape(x: np.ndarray, expected: Sequence[Optional[int]], name: str = "tensor") -> None:
+    """
+    Assert that x has shape compatible with `expected`.
+
+    Use None as wildcard for a dimension.
+
+    Example:
+        assert_shape(X, (None, D)) ensures X.ndim == 2 and X.shape[1] == D.
+    """
+    if x.ndim != len(expected):
+        raise ValueError(f"{name} ndim mismatch: got {x.ndim}, expected {len(expected)}")
+    for i, (got, exp) in enumerate(zip(x.shape, expected)):
+        if exp is not None and got != exp:
+            raise ValueError(f"{name} shape mismatch at dim {i}: got {got}, expected {exp}")
+
+
+def to_one_hot(
+    y: np.ndarray | Iterable[int],
+    num_classes: Optional[int] = None,
+    dtype: str = "float32",
+) -> np.ndarray:
+    """
+    One-hot like utils.one_hot; kept here for ergonomics close to tensor ops.
+    """
+    y = np.asarray(y)
+    if y.ndim != 1:
+        raise ValueError(f"to_one_hot expects 1D array of class indices, got shape {y.shape}")
+    if num_classes is None:
+        num_classes = int(y.max()) + 1 if y.size > 0 else 0
+    out = np.zeros((y.shape[0], num_classes), dtype=dtype)
+    if y.size > 0 and num_classes > 0:
+        out[np.arange(y.shape[0]), y.astype(int)] = 1
+    return out
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\training.py ====
+# src/training.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Tuple
+
+import numpy as np
+
+from .logger import CSVLogger, StdoutLogger
+from .metrics import accuracy, confusion_matrix
+from .utils import batch_iterator, train_val_split
+
+
+@dataclass
+class TrainerConfig:
+    epochs: int = 20
+    batch_size: int = 32
+    shuffle: bool = True
+    val_ratio: float = 0.2  # if X_val/y_val not provided
+    task: str = "multiclass"  # "multiclass" or "binary"
+    threshold: float = 0.5
+    log_to_csv: Optional[str] = None  # filepath or None
+    seed: Optional[int] = 42
+
+
+class Trainer:
+    """
+    Minimal training loop runner.
+
+    Expects:
+      - model: has forward, backward, parameters, zero_grad, predict_proba/predict (optional)
+      - optimizer: has step(params_iter)
+      - loss: has forward_backward(y_pred, y_true, backward=True)
+    """
+
+    def __init__(self, model, optimizer, loss, config: TrainerConfig = TrainerConfig()):
+        self.model = model
+        self.optimizer = optimizer
+        self.loss = loss
+        self.cfg = config
+        self.slog = StdoutLogger()
+        self.csv = CSVLogger(self.cfg.log_to_csv) if self.cfg.log_to_csv else None
+        self.callbacks = []  # type: List[object]
+
+    def add_callback(self, cb) -> None:
+        self.callbacks.append(cb)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        X_val: Optional[np.ndarray] = None,
+        y_val: Optional[np.ndarray] = None,
+    ) -> Dict[str, List[float]]:
+        # Setup callbacks
+        for cb in self.callbacks:
+            if hasattr(cb, "on_train_begin"):
+                cb.on_train_begin()
+
+        # Validation split if not provided
+        if X_val is None or y_val is None:
+            X_tr, y_tr, X_val, y_val = train_val_split(
+                X, y, val_ratio=self.cfg.val_ratio, seed=self.cfg.seed, shuffle=True
+            )
+        else:
+            X_tr, y_tr = X, y
+
+        history = {"loss": [], "acc": [], "val_loss": [], "val_acc": []}
+
+        for epoch in range(1, self.cfg.epochs + 1):
+            for cb in self.callbacks:
+                if hasattr(cb, "on_epoch_begin"):
+                    cb.on_epoch_begin(epoch)
+
+            # Training epoch
+            losses = []
+            correct = 0
+            total = 0
+
+            for bi, (xb, yb) in enumerate(
+                batch_iterator(X_tr, y_tr, batch_size=self.cfg.batch_size, shuffle=self.cfg.shuffle, seed=self.cfg.seed)
+            ):
+                logits_or_preds = self.model.forward(xb, training=True)
+                loss, dY = self.loss.forward_backward(logits_or_preds, yb, backward=True)
+                losses.append(loss)
+                # Backward + step
+                self.model.backward(dY)
+                self.optimizer.step(self.model.parameters())
+                self.model.zero_grad()
+
+                # Train accuracy
+                acc_batch = self._batch_accuracy(logits_or_preds, yb)
+                correct += acc_batch * xb.shape[0]
+                total += xb.shape[0]
+
+                # Callbacks batch end
+                logs_batch = {"loss": loss}
+                for cb in self.callbacks:
+                    if hasattr(cb, "on_batch_end"):
+                        cb.on_batch_end(bi, logs_batch)
+
+            train_loss = float(np.mean(losses) if losses else 0.0)
+            train_acc = float(correct / max(total, 1))
+
+            # Validation
+            val_logits_or_preds = self.model.forward(X_val, training=False)
+            val_loss, _ = self.loss.forward_backward(val_logits_or_preds, y_val, backward=False)
+            val_acc = self._batch_accuracy(val_logits_or_preds, y_val)
+
+            # Log
+            history["loss"].append(train_loss)
+            history["acc"].append(train_acc)
+            history["val_loss"].append(float(val_loss))
+            history["val_acc"].append(float(val_acc))
+
+            msg = f"Epoch {epoch:03d} | loss={train_loss:.4f} | acc={train_acc:.3f} | val_loss={val_loss:.4f} | val_acc={val_acc:.3f}"
+            self.slog.log(msg)
+            if self.csv:
+                self.csv.log({"epoch": epoch, "loss": train_loss, "acc": train_acc, "val_loss": float(val_loss), "val_acc": float(val_acc)})
+
+            # Callbacks epoch end
+            logs_epoch = {"loss": train_loss, "acc": train_acc, "val_loss": float(val_loss), "val_acc": float(val_acc)}
+            stop = False
+            for cb in self.callbacks:
+                if hasattr(cb, "on_epoch_end"):
+                    cb.on_epoch_end(epoch, logs_epoch)
+                if getattr(cb, "stop_training", False):
+                    stop = True
+            if stop:
+                self.slog.log("Early stopping triggered.")
+                break
+
+        for cb in self.callbacks:
+            if hasattr(cb, "on_train_end"):
+                cb.on_train_end()
+        if self.csv:
+            self.csv.close()
+
+        return history
+
+    def evaluate(self, X: np.ndarray, y: np.ndarray) -> Dict[str, float]:
+        logits_or_preds = self.model.forward(X, training=False)
+        loss, _ = self.loss.forward_backward(logits_or_preds, y, backward=False)
+        acc = self._batch_accuracy(logits_or_preds, y)
+        return {"loss": float(loss), "acc": float(acc)}
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self.model.forward(X, training=False)
+
+    def predict(
+        self,
+        X: np.ndarray,
+        task: Optional[str] = None,
+        threshold: Optional[float] = None,
+    ) -> np.ndarray:
+        task = task or self.cfg.task
+        threshold = threshold if threshold is not None else self.cfg.threshold
+        scores = self.predict_proba(X)
+        if task == "multiclass":
+            return scores.argmax(axis=1)
+        # binary
+        scores = scores.squeeze()
+        return (scores >= threshold).astype(int)
+
+    def confusion_matrix(self, X: np.ndarray, y: np.ndarray, num_classes: Optional[int] = None) -> np.ndarray:
+        probs = self.predict_proba(X)
+        return confusion_matrix(probs, y, num_classes=num_classes)
+
+    def _batch_accuracy(self, y_pred: np.ndarray, y_true: np.ndarray) -> float:
+        if self.cfg.task == "multiclass":
+            return accuracy(y_pred, y_true, task="multiclass")
+        return accuracy(y_pred, y_true, task="binary", threshold=self.cfg.threshold)
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\src\utils.py ====
+# src/utils.py
+
+from __future__ import annotations
+
+import math
+from typing import Generator, Iterable, Optional, Tuple, Union
+
+import numpy as np
+import pandas as pd
+
+
+def set_seed(seed: int) -> None:
+    """
+    Set global RNG seed for NumPy and Python's hash seed for reproducibility.
+    """
+    np.random.seed(seed)
+    # Python's hash seed influences hashing-based randomization in some libs
+    import os
+
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def shuffle_in_unison(
+    X: np.ndarray,
+    y: Optional[np.ndarray] = None,
+    seed: Optional[int] = None,
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """
+    Shuffle X (and y if provided) with the same random permutation.
+
+    Params:
+        X: array of shape (N, ...)
+        y: optional array of shape (N, ...) or (N,)
+        seed: optional seed for determinism
+
+    Returns:
+        X_shuffled, y_shuffled (y_shuffled is None if y is None)
+    """
+    if seed is not None:
+        rng_state = np.random.get_state()
+        np.random.seed(seed)
+    N = X.shape[0]
+    perm = np.random.permutation(N)
+    Xs = X[perm]
+    ys = y[perm] if y is not None else None
+    if seed is not None:
+        np.random.set_state(rng_state)
+    return Xs, ys
+
+
+def one_hot(
+    y: Union[np.ndarray, Iterable[int]],
+    num_classes: Optional[int] = None,
+    dtype: str = "float32",
+) -> np.ndarray:
+    """
+    Convert integer class indices to one-hot matrix.
+
+    Params:
+        y: shape (N,) int labels or iterable
+        num_classes: optional; if None, inferred as max(y)+1
+        dtype: output dtype
+
+    Returns:
+        Y: shape (N, C)
+    """
+    y = np.asarray(y)
+    if y.ndim != 1:
+        raise ValueError(f"one_hot expects 1D array of class indices, got shape {y.shape}")
+    if num_classes is None:
+        num_classes = int(y.max()) + 1 if y.size > 0 else 0
+    Y = np.zeros((y.shape[0], num_classes), dtype=dtype)
+    if y.size > 0 and num_classes > 0:
+        Y[np.arange(y.shape[0]), y.astype(int)] = 1
+    return Y
+
+
+def batch_iterator(
+    X: np.ndarray,
+    y: Optional[np.ndarray] = None,
+    batch_size: int = 32,
+    shuffle: bool = True,
+    drop_last: bool = False,
+    seed: Optional[int] = None,
+) -> Generator[Tuple[np.ndarray, Optional[np.ndarray]], None, None]:
+    """
+    Yield mini-batches of (X, y).
+
+    Params:
+        X: shape (N, ...)
+        y: optional labels with first dimension N
+        batch_size: size of each batch
+        shuffle: shuffle before iterating
+        drop_last: if True, drop the last incomplete batch
+        seed: optional seed for deterministic shuffling
+
+    Yields:
+        (xb, yb) where xb shape (B, ...) and yb shape (B, ...) or None
+    """
+    N = X.shape[0]
+    if y is not None and y.shape[0] != N:
+        raise ValueError(f"X and y must have the same first dimension. Got {N} and {y.shape[0]}")
+    indices = np.arange(N)
+    if shuffle:
+        if seed is not None:
+            rng_state = np.random.get_state()
+            np.random.seed(seed)
+        np.random.shuffle(indices)
+        if seed is not None:
+            np.random.set_state(rng_state)
+
+    for start in range(0, N, batch_size):
+        end = start + batch_size
+        if end > N and drop_last:
+            break
+        batch_idx = indices[start:end]
+        xb = X[batch_idx]
+        yb = y[batch_idx] if y is not None else None
+        yield xb, yb
+
+
+def train_val_split(
+    X: np.ndarray,
+    y: Optional[np.ndarray] = None,
+    val_ratio: float = 0.2,
+    seed: Optional[int] = None,
+    shuffle: bool = True,
+) -> Tuple[np.ndarray, Optional[np.ndarray], np.ndarray, Optional[np.ndarray]]:
+    """
+    Split arrays into train and validation sets.
+
+    Params:
+        X: shape (N, ...)
+        y: optional shape (N, ...)
+        val_ratio: fraction of data for validation (0 < val_ratio < 1)
+        seed: optional seed for deterministic split
+        shuffle: whether to shuffle before split
+
+    Returns:
+        X_train, y_train, X_val, y_val
+    """
+    if not (0.0 < val_ratio < 1.0):
+        raise ValueError("val_ratio must be in (0, 1)")
+    N = X.shape[0]
+    indices = np.arange(N)
+    if shuffle:
+        if seed is not None:
+            rng_state = np.random.get_state()
+            np.random.seed(seed)
+        np.random.shuffle(indices)
+        if seed is not None:
+            np.random.set_state(rng_state)
+    split = int(math.floor((1.0 - val_ratio) * N))
+    train_idx = indices[:split]
+    val_idx = indices[split:]
+
+    X_train = X[train_idx]
+    X_val = X[val_idx]
+    if y is None:
+        return X_train, None, X_val, None
+    y_train = y[train_idx]
+    y_val = y[val_idx]
+    return X_train, y_train, X_val, y_val
+
+
+def to_numpy(x) -> np.ndarray:
+    """
+    Ensure input is a NumPy array (no-op if already np.ndarray).
+    """
+    if isinstance(x, np.ndarray):
+        return x
+    return np.asarray(x)
+
+
+def normalize_minmax(
+    X: np.ndarray,
+    axis: Optional[int] = None,
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """
+    Min-max normalize X to [0,1] along axis.
+
+    If axis is None, uses global min/max.
+    """
+    X = np.asarray(X)
+    if axis is None:
+        xmin = X.min()
+        xmax = X.max()
+    else:
+        xmin = X.min(axis=axis, keepdims=True)
+        xmax = X.max(axis=axis, keepdims=True)
+    return (X - xmin) / (xmax - xmin + eps)
+
+
+def zscore(
+    X: np.ndarray,
+    axis: Optional[int] = 0,
+    eps: float = 1e-8,
+) -> np.ndarray:
+    """
+    Z-score standardization: (X - mean) / std
+    """
+    X = np.asarray(X)
+    mean = X.mean(axis=axis, keepdims=True)
+    std = X.std(axis=axis, keepdims=True)
+    return (X - mean) / (std + eps)
+
+
+def ensure_2d(X: np.ndarray) -> np.ndarray:
+    """
+    Ensure X is 2D: if 1D becomes (N, 1), if 2D keep, else flatten last dims.
+    """
+    X = np.asarray(X)
+    if X.ndim == 1:
+        return X[:, None]
+    if X.ndim == 2:
+        return X
+    N = X.shape[0]
+    return X.reshape(N, -1)
+
+
+def load_iris_dataframe() -> pd.DataFrame:
+    """
+    Load Iris dataset via pandas remote CSV alternative if available locally,
+    or raise a helpful message. This function assumes you have a local iris CSV.
+    Not using external URLs by design.
+
+    Returns:
+        DataFrame with features and species label column named 'target' if present.
+    """
+    # Placeholder to encourage user-provided path
+    raise FileNotFoundError(
+        "Please provide a local Iris CSV file and load it with pandas.read_csv. "
+        "This scaffold avoids external URLs by design."
+    )
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_gradient.py ====
+# tests/test_gradients.py
+
+import numpy as np
+
+from src.activations import ReLU, Sigmoid, Softmax, Tanh
+from src.layers import Dense
+from src.losses import BinaryCrossEntropy, CategoricalCrossEntropy, MSELoss
+
+
+def numerical_gradient(f, x, eps=1e-6):
+    grad = np.zeros_like(x, dtype=np.float64)
+    it = np.nditer(x, flags=["multi_index"], op_flags=["readwrite"])
+    while not it.finished:
+        idx = it.multi_index
+        orig = x[idx]
+        x[idx] = orig + eps
+        f1 = f(x)
+        x[idx] = orig - eps
+        f2 = f(x)
+        x[idx] = orig
+        grad[idx] = (f1 - f2) / (2 * eps)
+        it.iternext()
+    return grad
+
+
+def test_dense_gradients_vs_numerical():
+    rng = np.random.default_rng(0)
+    N, D, H = 4, 3, 5
+    X = rng.standard_normal((N, D)).astype("float64")
+    dense = Dense(D, H, weight_init="xavier_uniform", dtype="float64")
+    Y = rng.standard_normal((N, H)).astype("float64")
+
+    def loss_W(W):
+        out = X @ W + dense.b
+        diff = out - Y
+        return 0.5 * np.sum(diff * diff)
+
+    def loss_b(b):
+        out = X @ dense.W + b
+        diff = out - Y
+        return 0.5 * np.sum(diff * diff)
+
+    out = dense.forward(X)
+    diff = out - Y
+    dOut = diff
+    dense.backward(dOut)
+
+    num_dW = numerical_gradient(lambda W: loss_W(W), dense.W.copy())
+    num_db = numerical_gradient(lambda b: loss_b(b), dense.b.copy())
+
+    rel_dW = np.linalg.norm(dense.dW - num_dW) / (np.linalg.norm(dense.dW) + np.linalg.norm(num_dW) + 1e-12)
+    rel_db = np.linalg.norm(dense.db - num_db) / (np.linalg.norm(dense.db) + np.linalg.norm(num_db) + 1e-12)
+    assert rel_dW < 1e-6
+    assert rel_db < 1e-6
+
+
+def test_activation_backward_correctness():
+    rng = np.random.default_rng(1)
+    X = rng.standard_normal((6, 7)).astype("float64")
+    dUp = rng.standard_normal((6, 7)).astype("float64")
+
+    # ReLU
+    relu = ReLU()
+    Y = relu.forward(X)
+    dX = relu.backward(dUp)
+    assert np.all((X <= 0) == (dX == 0))
+
+    # Sigmoid numeric check
+    sig = Sigmoid()
+    S = sig.forward(X)
+    dL_dS = dUp
+    dX_sig = sig.backward(dL_dS)
+
+    def f_sig(x):
+        return np.sum(sig.forward(x) * dL_dS)
+
+    num_dX_sig = numerical_gradient(f_sig, X.copy())
+    rel = np.linalg.norm(dX_sig - num_dX_sig) / (np.linalg.norm(dX_sig) + np.linalg.norm(num_dX_sig) + 1e-12)
+    assert rel < 1e-5
+
+    # Tanh numeric check
+    tanh = Tanh()
+    T = tanh.forward(X)
+    dX_tanh = tanh.backward(dL_dS)
+
+    def f_tanh(x):
+        return np.sum(tanh.forward(x) * dL_dS)
+
+    num_dX_tanh = numerical_gradient(f_tanh, X.copy())
+    rel2 = np.linalg.norm(dX_tanh - num_dX_tanh) / (np.linalg.norm(dX_tanh) + np.linalg.norm(num_dX_tanh) + 1e-12)
+    assert rel2 < 1e-5
+
+    # Softmax backward identity check: rowsum zero when composed with arbitrary dUp
+    sm = Softmax(axis=1)
+    P = sm.forward(X)
+    dX_sm = sm.backward(dUp)
+    rowsum = dX_sm.sum(axis=1)
+    assert np.allclose(rowsum, 0.0, atol=1e-8)
+
+
+def test_loss_gradients():
+    rng = np.random.default_rng(2)
+
+    # MSE
+    mse = MSELoss()
+    y_pred = rng.standard_normal((5, 3)).astype("float64")
+    y_true = rng.standard_normal((5, 3)).astype("float64")
+
+    def f_mse(x):
+        loss, _ = mse.forward_backward(x, y_true, backward=False)
+        return loss
+
+    _, grad_mse = mse.forward_backward(y_pred, y_true, backward=True)
+    num_grad_mse = numerical_gradient(f_mse, y_pred.copy())
+    rel_mse = np.linalg.norm(grad_mse - num_grad_mse) / (np.linalg.norm(grad_mse) + np.linalg.norm(num_grad_mse) + 1e-12)
+    assert rel_mse < 1e-6
+
+    # BCE (logits)
+    bce = BinaryCrossEntropy(from_logits=True)
+    z = rng.standard_normal((7, 1)).astype("float64")
+    y = (rng.random((7, 1)) > 0.5).astype("float64")
+
+    def f_bce(x):
+        loss, _ = bce.forward_backward(x, y, backward=False)
+        return loss
+
+    _, grad_bce = bce.forward_backward(z, y, backward=True)
+    num_grad_bce = numerical_gradient(f_bce, z.copy())
+    rel_bce = np.linalg.norm(grad_bce - num_grad_bce) / (np.linalg.norm(grad_bce) + np.linalg.norm(num_grad_bce) + 1e-10)
+    assert rel_bce < 5e-4  # looser due to exp/log numerics
+
+    # CCE (logits)
+    cce = CategoricalCrossEntropy(from_logits=True)
+    N, C = 6, 4
+    z = rng.standard_normal((N, C)).astype("float64")
+    y_idx = rng.integers(0, C, size=N)
+
+    def f_cce(x):
+        loss, _ = cce.forward_backward(x, y_idx, backward=False)
+        return loss
+
+    _, grad_cce = cce.forward_backward(z, y_idx, backward=True)
+    num_grad_cce = numerical_gradient(f_cce, z.copy())
+    rel_cce = np.linalg.norm(grad_cce - num_grad_cce) / (np.linalg.norm(grad_cce) + np.linalg.norm(num_grad_cce) + 1e-10)
+    assert rel_cce < 1e-4
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_layers_activations.py ====
+# tests/test_layers_and_activations.py
+
+import numpy as np
+
+from src.activations import ReLU, Sigmoid, Softmax, Tanh
+from src.layers import Dense
+
+
+def numerical_gradient(f, x, eps=1e-5):
+    grad = np.zeros_like(x)
+    it = np.nditer(x, flags=["multi_index"], op_flags=["readwrite"])
+    while not it.finished:
+        idx = it.multi_index
+        orig = x[idx]
+        x[idx] = orig + eps
+        f1 = f(x)
+        x[idx] = orig - eps
+        f2 = f(x)
+        x[idx] = orig
+        grad[idx] = (f1 - f2) / (2 * eps)
+        it.iternext()
+    return grad
+
+
+def test_dense_forward_backward_gradcheck():
+    rng = np.random.default_rng(0)
+    N, D, H = 4, 3, 5
+    X = rng.standard_normal((N, D)).astype("float64")  # double for gradcheck stability
+    dense = Dense(D, H, weight_init="xavier_uniform", dtype="float64")
+    Y = rng.standard_normal((N, H)).astype("float64")
+
+    # Define loss: 0.5 * ||dense(X) - Y||^2
+    def loss_W(W):
+        out = X @ W + dense.b
+        diff = out - Y
+        return 0.5 * np.sum(diff * diff)
+
+    def loss_b(b):
+        out = X @ dense.W + b
+        diff = out - Y
+        return 0.5 * np.sum(diff * diff)
+
+    out = dense.forward(X)
+    diff = out - Y
+    dOut = diff  # dL/dOut for MSE
+
+    dense.backward(dOut)  # populates dW, db
+
+    num_dW = numerical_gradient(lambda W: loss_W(W), dense.W.copy())
+    num_db = numerical_gradient(lambda b: loss_b(b), dense.b.copy())
+
+    rel_dW = np.linalg.norm(dense.dW - num_dW) / (np.linalg.norm(dense.dW) + np.linalg.norm(num_dW) + 1e-12)
+    rel_db = np.linalg.norm(dense.db - num_db) / (np.linalg.norm(dense.db) + np.linalg.norm(num_db) + 1e-12)
+
+    assert rel_dW < 1e-6
+    assert rel_db < 1e-6
+
+
+def test_relu_backward_mask():
+    x = np.array([[-1.0, 0.0, 2.0]], dtype="float32")
+    relu = ReLU()
+    y = relu.forward(x)
+    dy = np.ones_like(x)
+    dx = relu.backward(dy)
+    assert np.allclose(y, [[0.0, 0.0, 2.0]])
+    assert np.allclose(dx, [[0.0, 0.0, 1.0]])
+
+
+def test_sigmoid_tanh_shapes():
+    rng = np.random.default_rng(1)
+    x = rng.standard_normal((7, 4)).astype("float32")
+    sig = Sigmoid()
+    tanh = Tanh()
+    y1 = sig.forward(x)
+    y2 = tanh.forward(x)
+    dx1 = sig.backward(np.ones_like(y1))
+    dx2 = tanh.backward(np.ones_like(y2))
+    assert y1.shape == x.shape and y2.shape == x.shape
+    assert dx1.shape == x.shape and dx2.shape == x.shape
+
+
+def test_softmax_stable_rowsum_and_backward():
+    rng = np.random.default_rng(2)
+    x = rng.standard_normal((6, 5)).astype("float32") * 10.0  # large logits to test stability
+    sm = Softmax(axis=1)
+    y = sm.forward(x)
+    rowsums = y.sum(axis=1)
+    assert np.allclose(rowsums, np.ones_like(rowsums), atol=1e-6)
+
+    dy = rng.standard_normal(y.shape).astype("float32")
+    dx = sm.backward(dy)
+    assert dx.shape == y.shape
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_losses.py ====
+import numpy as np
+
+from src.losses import BinaryCrossEntropy, CategoricalCrossEntropy, MSELoss
+
+
+def numerical_gradient(f, x, eps=1e-6):
+    grad = np.zeros_like(x, dtype=np.float64)
+    it = np.nditer(x, flags=["multi_index"], op_flags=["readwrite"])
+    while not it.finished:
+        idx = it.multi_index
+        orig = x[idx]
+        x[idx] = orig + eps
+        f1 = f(x)
+        x[idx] = orig - eps
+        f2 = f(x)
+        x[idx] = orig
+        grad[idx] = (f1 - f2) / (2 * eps)
+        it.iternext()
+    return grad
+
+
+def test_mse_gradcheck():
+    rng = np.random.default_rng(0)
+    y_pred = rng.standard_normal((4, 3)).astype("float64")
+    y_true = rng.standard_normal((4, 3)).astype("float64")
+    mse = MSELoss()
+
+    def f(x):
+        loss, _ = mse.forward_backward(x, y_true, backward=False)
+        return loss
+
+    loss, grad = mse.forward_backward(y_pred, y_true)
+    num_grad = numerical_gradient(f, y_pred.copy())
+    rel = np.linalg.norm(grad - num_grad) / (np.linalg.norm(grad) + np.linalg.norm(num_grad) + 1e-12)
+    assert rel < 1e-6
+
+
+def test_bce_logits_gradshape_and_values():
+    rng = np.random.default_rng(1)
+    z = rng.standard_normal((7, 1)).astype("float64")
+    y = (rng.random((7, 1)) > 0.5).astype("float64")
+    bce = BinaryCrossEntropy(from_logits=True)
+
+    def f(x):
+        loss, _ = bce.forward_backward(x, y, backward=False)
+        return loss
+
+    loss, grad = bce.forward_backward(z, y)
+    assert grad.shape == z.shape
+
+    num_grad = numerical_gradient(f, z.copy())
+    rel = np.linalg.norm(grad - num_grad) / (np.linalg.norm(grad) + np.linalg.norm(num_grad) + 1e-10)
+    assert rel < 1e-4  # BCE is a bit trickier; loosen tolerance
+
+
+def test_cce_logits_prob_equivalence():
+    # When using logits with softmax, loss should match prob-mode if we pass the softmax probs
+    rng = np.random.default_rng(2)
+    N, C = 8, 5
+    z = rng.standard_normal((N, C)).astype("float64")
+    y_idx = rng.integers(0, C, size=N)
+
+    cce_logits = CategoricalCrossEntropy(from_logits=True)
+    loss_z, _ = cce_logits.forward_backward(z, y_idx, backward=False)
+
+    # Convert to probabilities
+    z_shift = z - z.max(axis=1, keepdims=True)
+    p = np.exp(z_shift)
+    p /= p.sum(axis=1, keepdims=True)
+
+    cce_probs = CategoricalCrossEntropy(from_logits=False)
+    loss_p, _ = cce_probs.forward_backward(p, y_idx, backward=False)
+
+    assert np.allclose(loss_z, loss_p, atol=1e-10)
+
+
+def test_cce_grad_properties_rowsum_zero():
+    # Grad wrt logits should sum to zero per row (softmax-CCE)
+    rng = np.random.default_rng(3)
+    N, C = 6, 4
+    z = rng.standard_normal((N, C)).astype("float64")
+    y_idx = rng.integers(0, C, size=N)
+
+    cce = CategoricalCrossEntropy(from_logits=True)
+    _, grad = cce.forward_backward(z, y_idx)
+    rowsum = grad.sum(axis=1)
+    assert np.allclose(rowsum, 0.0, atol=1e-12)
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_optim.py ====
+# tests/test_optim.py
+
+import numpy as np
+
+from src.activations import ReLU
+from src.layers import Dense
+from src.losses import MSELoss
+from src.model import Sequential
+from src.optim import Adam, SGD
+
+
+def test_sgd_updates_reduce_loss():
+    np.random.seed(0)
+    N, D, H = 128, 5, 16
+    X = np.random.randn(N, D).astype("float32")
+    Wtrue = np.random.randn(D, 1).astype("float32")
+    y = X @ Wtrue + 0.1 * np.random.randn(N, 1).astype("float32")
+
+    model = Sequential([Dense(D, H), ReLU(), Dense(H, 1)])
+    loss_fn = MSELoss()
+    opt = SGD(lr=0.05, momentum=0.9, nesterov=True, weight_decay=0.0)
+
+    # Before
+    y_pred = model.forward(X, training=True)
+    loss0, _ = loss_fn.forward_backward(y_pred, y, backward=False)
+
+    # One step
+    y_pred = model.forward(X, training=True)
+    loss, grad = loss_fn.forward_backward(y_pred, y, backward=True)
+    model.backward(grad)
+    opt.step(model.parameters())
+    model.zero_grad()
+
+    y_pred2 = model.forward(X, training=False)
+    loss1, _ = loss_fn.forward_backward(y_pred2, y, backward=False)
+
+    assert loss1 <= loss0 + 1e-6  # should not increase (allow tiny num diff)
+
+
+def test_adam_bias_correction_and_decay_shapes():
+    np.random.seed(1)
+    N, D, H = 64, 3, 8
+    X = np.random.randn(N, D).astype("float32")
+    y = np.random.randn(N, 1).astype("float32")
+
+    model = Sequential([Dense(D, H), ReLU(), Dense(H, 1)])
+    loss_fn = MSELoss()
+    opt = Adam(lr=1e-2, weight_decay=1e-3)
+
+    # Single step sanity
+    y_pred = model.forward(X, training=True)
+    loss, dypred = loss_fn.forward_backward(y_pred, y, backward=True)
+    model.backward(dypred)
+    params = list(model.parameters())
+    old_params = [p["param"].copy() for p in params]
+    opt.step(params)
+    model.zero_grad()
+
+    # Check params changed and shapes preserved
+    for old, p in zip(old_params, params):
+        assert old.shape == p["param"].shape
+        assert not np.allclose(old, p["param"])
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_overfit_small_batch.py ====
+# tests/test_overfit_small_batch.py
+
+import numpy as np
+
+from src.activations import ReLU
+from src.layers import Dense
+from src.losses import CategoricalCrossEntropy, MSELoss
+from src.model import Sequential
+from src.optim import Adam, SGD
+from src.training import Trainer, TrainerConfig
+from src.utils import one_hot, set_seed
+
+
+def test_overfit_tiny_multiclass_batch():
+    set_seed(123)
+    N, D, C = 16, 8, 3
+    X = np.random.randn(N, D).astype("float32")
+    Wtrue = np.random.randn(D, C).astype("float32")
+    logits = X @ Wtrue + 0.1 * np.random.randn(N, C).astype("float32")
+    y_idx = logits.argmax(axis=1)
+    y = one_hot(y_idx, C)
+
+    model = Sequential([Dense(D, 32, weight_init="he_normal"), ReLU(), Dense(32, C, weight_init="xavier_uniform")])
+    loss = CategoricalCrossEntropy(from_logits=True)
+    opt = Adam(lr=0.05)
+
+    cfg = TrainerConfig(epochs=200, batch_size=N, val_ratio=0.25, task="multiclass", seed=1, shuffle=True)
+    trainer = Trainer(model, opt, loss, cfg)
+
+    history = trainer.fit(X, y)
+    final_acc = history["acc"][-1]
+    assert final_acc > 0.95  # should easily overfit
+
+
+def test_overfit_tiny_regression_batch():
+    set_seed(321)
+    N, D = 16, 6
+    X = np.random.randn(N, D).astype("float32")
+    Wtrue = np.random.randn(D, 1).astype("float32")
+    y = X @ Wtrue + 0.05 * np.random.randn(N, 1).astype("float32")
+
+    model = Sequential([Dense(D, 32), ReLU(), Dense(32, 1)])
+    loss = MSELoss()
+    opt = SGD(lr=0.1, momentum=0.9, nesterov=True)
+
+    # Simple manual training to avoid classification metrics
+    for _ in range(500):
+        y_pred = model.forward(X, training=True)
+        l, d = loss.forward_backward(y_pred, y, backward=True)
+        model.backward(d)
+        opt.step(model.parameters())
+        model.zero_grad()
+
+    y_pred = model.forward(X, training=False)
+    final_mse, _ = loss.forward_backward(y_pred, y, backward=False)
+    assert final_mse < 1e-3
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_sequential.py ====
+# tests/test_sequential.py
+
+import numpy as np
+
+from src.activations import ReLU
+from src.layers import Dense
+from src.model import Sequential
+
+
+def test_sequential_forward_backward_shapes():
+    N, D, H, C = 10, 4, 7, 3
+    X = np.random.randn(N, D).astype("float32")
+    model = Sequential([
+        Dense(D, H, weight_init="xavier_uniform"),
+        ReLU(),
+        Dense(H, C, weight_init="he_normal"),
+    ])
+
+    out = model.forward(X, training=True)
+    assert out.shape == (N, C)
+
+    dUp = np.random.randn(*out.shape).astype("float32")
+    dX = model.backward(dUp)
+    assert dX.shape == (N, D)
+
+
+def test_parameters_and_zero_grad():
+    N, D, H = 5, 3, 4
+    X = np.random.randn(N, D).astype("float32")
+    model = Sequential([
+        Dense(D, H),
+        ReLU(),
+        Dense(H, 2),
+    ])
+
+    out = model.forward(X, training=True)
+    dUp = np.random.randn(*out.shape).astype("float32")
+    model.backward(dUp)
+
+    # Ensure parameters iterator returns grads and params
+    params = list(model.parameters())
+    assert len(params) == 4  # two dense layers: W,b for each
+    for p in params:
+        assert "param" in p and "grad" in p
+        # grads should be same shape
+        assert p["param"].shape == p["grad"].shape
+
+    # After zero_grad, all grads become zero
+    model.zero_grad()
+    for p in model.parameters():
+        assert np.allclose(p["grad"], 0.0)
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_training.py ====
+# tests/test_training.py
+
+import numpy as np
+
+from src.activations import ReLU
+from src.layers import Dense
+from src.losses import CategoricalCrossEntropy
+from src.model import Sequential
+from src.optim import SGD
+from src.training import Trainer, TrainerConfig
+
+
+def test_trainer_runs_and_improves_simple_task():
+    np.random.seed(0)
+    N, D, C = 300, 6, 3
+    X = np.random.randn(N, D).astype("float32")
+    W = np.random.randn(D, C).astype("float32")
+    logits = X @ W + 0.3 * np.random.randn(N, C).astype("float32")
+    y_idx = logits.argmax(axis=1)
+    y = np.eye(C, dtype="float32")[y_idx]
+
+    model = Sequential([Dense(D, 32, weight_init="he_normal"), ReLU(), Dense(32, C, weight_init="xavier_uniform")])
+    loss = CategoricalCrossEntropy(from_logits=True)
+    opt = SGD(lr=0.1, momentum=0.9, nesterov=True)
+
+    cfg = TrainerConfig(epochs=5, batch_size=32, val_ratio=0.2, task="multiclass", seed=123)
+    trainer = Trainer(model, opt, loss, cfg)
+
+    # Before training
+    logits0 = model.forward(X, training=False)
+    loss0, _ = loss.forward_backward(logits0, y, backward=False)
+
+    history = trainer.fit(X, y)
+    logits1 = model.forward(X, training=False)
+    loss1, _ = loss.forward_backward(logits1, y, backward=False)
+
+    assert loss1 <= loss0 + 1e-5
+    assert len(history["loss"]) >= 1
+
+
+==== FILE: C:\Users\user\Downloads\work stuff\katas\custom-neural-network\tests\test_utils.py ====
+# tests/test_utils.py
+
+import numpy as np
+
+from src.utils import batch_iterator, one_hot, set_seed, shuffle_in_unison, train_val_split
+
+
+def test_one_hot_basic():
+    y = np.array([0, 2, 1, 2])
+    Y = one_hot(y, 3)
+    assert Y.shape == (4, 3)
+    assert (Y.argmax(axis=1) == y).all()
+
+
+def test_shuffle_in_unison_deterministic():
+    set_seed(0)
+    X = np.arange(10)[:, None]
+    y = np.arange(10)
+    Xs1, ys1 = shuffle_in_unison(X, y, seed=123)
+    Xs2, ys2 = shuffle_in_unison(X, y, seed=123)
+    assert np.array_equal(Xs1, Xs2)
+    assert np.array_equal(ys1, ys2)
+
+
+def test_batch_iterator_shapes():
+    N, D = 17, 4
+    X = np.random.randn(N, D)
+    y = np.random.randint(0, 3, size=N)
+    bs = 5
+    total = 0
+    for xb, yb in batch_iterator(X, y, batch_size=bs, shuffle=False, drop_last=False):
+        assert xb.shape[0] <= bs
+        assert yb.shape[0] == xb.shape[0]
+        total += xb.shape[0]
+    assert total == N
+
+
+def test_train_val_split_ratio():
+    X = np.arange(20)[:, None]
+    y = np.arange(20)
+    X_tr, y_tr, X_val, y_val = train_val_split(X, y, val_ratio=0.25, seed=42)
+    assert X_tr.shape[0] == 15
+    assert X_val.shape[0] == 5
+    assert y_tr.shape[0] == 15
+    assert y_val.shape[0] == 5
+
+
